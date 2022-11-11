@@ -52,5 +52,5 @@ ulimit -c 0
 if ulimit -T &> /dev/null; then
 	[ "$(ulimit -H -T)" = "unlimited" ] || ulimit -S -T $(ulimit -H -T)
 fi
-
-exec ../bin/go tool dist test -rebuild "$@"
+## 注释掉，跳过编译test，否则太慢
+# exec ../bin/go tool dist test -rebuild "$@"

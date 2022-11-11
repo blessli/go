@@ -111,7 +111,7 @@ func makechan(t *chantype, size int) *hchan {
 	c.elemtype = elem
 	c.dataqsiz = uint(size)
 	lockInit(&c.lock, lockRankHchan)
-
+	print("soli makechan: chan=", c, "; elemsize=", elem.size, "; dataqsiz=", size, "\n")
 	if debugChan {
 		print("makechan: chan=", c, "; elemsize=", elem.size, "; dataqsiz=", size, "\n")
 	}

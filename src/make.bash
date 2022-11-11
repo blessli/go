@@ -220,7 +220,7 @@ fi
 # Run dist bootstrap to complete make.bash.
 # Bootstrap installs a proper cmd/dist, built with the new toolchain.
 # Throw ours, built with Go 1.4, away after bootstrap.
-./cmd/dist/dist bootstrap -a $vflag $GO_DISTFLAGS "$@"
+./cmd/dist/dist bootstrap -a $vflag $GO_DISTFLAGS "$@" # todo: 仅编译修改包
 rm -f ./cmd/dist/dist
 
 # DO NOT ADD ANY NEW CODE HERE.
