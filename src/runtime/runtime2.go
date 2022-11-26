@@ -416,6 +416,7 @@ type g struct {
 
 	_panic    *_panic // innermost panic - offset known to liblink
 	_defer    *_defer // innermost defer
+	// 当前与 g 绑定的 m
 	m         *m      // current m; offset known to arm liblink
 	sched     gobuf
 	syscallsp uintptr // if status==Gsyscall, syscallsp = sched.sp to use during gc
@@ -509,7 +510,7 @@ const (
 	tlsSlots = 6
 	tlsSize  = tlsSlots * goarch.PtrSize
 )
-
+// 线程在 runtime 中的结构，对应一个 pthread，pthread 也会对应唯一的内核线程(task_struct):
 type m struct {
 	g0      *g     // goroutine with scheduling stack
 	morebuf gobuf  // gobuf arg to morestack
@@ -591,7 +592,7 @@ type m struct {
 	locksHeldLen int
 	locksHeld    [10]heldLockInfo
 }
-
+// 抽象数据结构，可以认为是 processor 的抽象，代表了任务执行时的上下文，m 必须获得 p 才能执行
 type p struct {
 	id          int32
 	status      uint32 // one of pidle/prunning/...
@@ -614,6 +615,7 @@ type p struct {
 	// Queue of runnable goroutines. Accessed without lock.
 	runqhead uint32
 	runqtail uint32
+	// 使用数组实现的循环队列
 	runq     [256]guintptr
 	// runnext, if non-nil, is a runnable G that was ready'd by
 	// the current G and should be run next instead of what's in
@@ -627,6 +629,7 @@ type p struct {
 	//
 	// Note that while other P's may atomically CAS this to zero,
 	// only the owner P can CAS it to a valid G.
+	// 在每个P内部还有一个特殊的runnext字段标识下一个要执行的协程。如果runnext不为空，则会直接执行当前runnext指向的协程，而不会去runq数组中寻找
 	runnext guintptr
 
 	// Available G's (status == Gdead)
@@ -738,7 +741,7 @@ type p struct {
 	// Padding is no longer needed. False sharing is now not a worry because p is large enough
 	// that its size class is an integer multiple of the cache line size (for any of our architectures).
 }
-
+// 全局调度器，全局只有一个 schedt 类型的实例
 type schedt struct {
 	// accessed atomically. keep at top to ensure alignment on 32-bit systems.
 	goidgen   uint64
@@ -765,6 +768,7 @@ type schedt struct {
 	nmspinning uint32 // See "Worker thread parking/unparking" comment in proc.go.
 
 	// Global runnable queue.
+	// 被所有P共享的全局运行队列存储在schedt.runq中
 	runq     gQueue
 	runqsize int32
 

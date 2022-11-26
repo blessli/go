@@ -205,7 +205,7 @@ func main() {
 			unlockOSThread()
 		}
 	}()
-
+	// 启动后台垃圾回收器的工作QQQ
 	gcenable()
 
 	main_init_done = make(chan bool)
@@ -341,6 +341,7 @@ func goschedguarded() {
 // Reason explains why the goroutine has been parked. It is displayed in stack
 // traces and heap dumps. Reasons should be unique and descriptive. Do not
 // re-use reasons, add new ones.
+// goroutine 挂起
 func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason waitReason, traceEv byte, traceskip int) {
 	if reason != waitReasonSleep {
 		checkTimeouts() // timeouts may expire while two goroutines keep the scheduler busy
@@ -366,7 +367,7 @@ func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason w
 func goparkunlock(lock *mutex, reason waitReason, traceEv byte, traceskip int) {
 	gopark(parkunlock_c, unsafe.Pointer(lock), reason, traceEv, traceskip)
 }
-
+// 如果当前协程需要被唤醒，那么会先将协程的状态从_Gwaiting转换为_Grunnable，并添加到当前P的局部运行队列中
 func goready(gp *g, traceskip int) {
 	systemstack(func() {
 		ready(gp, traceskip, true)
@@ -855,6 +856,7 @@ func ready(gp *g, traceskip int, next bool) {
 
 	// status is Gwaiting or Gscanwaiting, make Grunnable and put on runq
 	casgstatus(gp, _Gwaiting, _Grunnable)
+	// G放入运行队列
 	runqput(_g_.m.p.ptr(), gp, next)
 	wakep()
 	releasem(mp)
@@ -2516,12 +2518,14 @@ func execute(gp *g, inheritTime bool) {
 		}
 		traceGoStart()
 	}
-
+	// gogo函数是与操作系统有关的函数，用于完成栈的切换及CPU寄存器的恢复
 	gogo(&gp.sched)
 }
 
 // Finds a runnable goroutine to execute.
 // Tries to steal from other P's, get g from local or global queue, poll network.
+// 找到一个可执行的 goroutine 来 execute
+// 会尝试从其它的 P 那里偷 g，从全局队列中拿，或者 network 中 poll
 func findrunnable() (gp *g, inheritTime bool) {
 	_g_ := getg()
 
@@ -3108,6 +3112,8 @@ func injectglist(glist *gList) {
 
 // One round of scheduler: find a runnable goroutine and execute it.
 // Never returns.
+// 调度器调度一轮要执行的函数: 寻找一个 runnable 状态的 goroutine，并 execute 它
+// schedule 函数处理具体的调度策略，选择下一个要执行的协程
 func schedule() {
 	_g_ := getg()
 
@@ -3172,8 +3178,10 @@ top:
 		// Check the global runnable queue once in a while to ensure fairness.
 		// Otherwise two goroutines can completely occupy the local runqueue
 		// by constantly respawning each other.
+		// P中每执行61次调度，就需要优先从全局队列中获取一个G到当前P中，并执行下一个要执行的G
 		if _g_.m.p.ptr().schedtick%61 == 0 && sched.runqsize > 0 {
 			lock(&sched.lock)
+			// 从全局队列中获取1个G
 			gp = globrunqget(_g_.m.p.ptr(), 1)
 			unlock(&sched.lock)
 		}
@@ -3222,7 +3230,7 @@ top:
 		startlockedm(gp)
 		goto top
 	}
-
+	// execute函数执行一些具体的状态转移、协程g与结构体m之间的绑定等操作
 	execute(gp, inheritTime)
 }
 
@@ -3311,6 +3319,12 @@ func parkunlock_c(gp *g, lock unsafe.Pointer) bool {
 }
 
 // park continuation on g0.
+/*
+和主动调度类似的是，被动调度需要先从当前协程切换到协程g0，更新协程的状态并解绑与M的关系，重新调度。
+和主动调度不同的是，被动调度不会将G放入全局运行队列，因为当前G的状态不是_Grunnable而是_Gwaiting，
+所以，被动调度需要一个额外的唤醒机制
+*/
+// 被动调度核心方法
 func park_m(gp *g) {
 	_g_ := getg()
 
@@ -3335,7 +3349,7 @@ func park_m(gp *g) {
 	}
 	schedule()
 }
-
+// 主动调度核心方法
 func goschedImpl(gp *g) {
 	status := readgstatus(gp)
 	if status&^_Gscan != _Grunning {
@@ -3343,11 +3357,13 @@ func goschedImpl(gp *g) {
 		throw("bad g status")
 	}
 	casgstatus(gp, _Grunning, _Grunnable)
+	// 取消G与M之间的绑定关系
 	dropg()
 	lock(&sched.lock)
+	// 把G放入全局运行队列
 	globrunqput(gp)
 	unlock(&sched.lock)
-
+	// 进入新一轮调度
 	schedule()
 }
 
@@ -5209,6 +5225,7 @@ func retake(now int64) uint32 {
 	// We can't use a range loop over allp because we may
 	// temporarily drop the allpLock. Hence, we need to re-fetch
 	// allp each time around the loop.
+	// 遍历所有的P
 	for i := 0; i < len(allp); i++ {
 		_p_ := allp[i]
 		if _p_ == nil {
@@ -5221,19 +5238,23 @@ func retake(now int64) uint32 {
 		sysretake := false
 		if s == _Prunning || s == _Psyscall {
 			// Preempt G if it's running for too long.
+			// 如果G运行时间过长则抢占
 			t := int64(_p_.schedtick)
 			if int64(pd.schedtick) != t {
 				pd.schedtick = uint32(t)
 				pd.schedwhen = now
 			} else if pd.schedwhen+forcePreemptNS <= now {
+				// 连续运行超过10ms，设置抢占请求
 				preemptone(_p_)
 				// In case of syscall, preemptone() doesn't
 				// work, because there is no M wired to P.
 				sysretake = true
 			}
 		}
+		// P处于系统调用之中，检查是否需要抢占
 		if s == _Psyscall {
 			// Retake P from syscall if it's there for more than 1 sysmon tick (at least 20us).
+			// 如果已经超过了一个系统监控的tick(20us)，则从系统调用中抢占P
 			t := int64(_p_.syscalltick)
 			if !sysretake && int64(pd.syscalltick) != t {
 				pd.syscalltick = uint32(t)
@@ -5514,7 +5535,7 @@ func globrunqget(_p_ *p, max int32) *g {
 	if sched.runqsize == 0 {
 		return nil
 	}
-
+	// 根据P的数量平分全局运行队列中的G
 	n := sched.runqsize/gomaxprocs + 1
 	if n > sched.runqsize {
 		n = sched.runqsize
@@ -5522,6 +5543,7 @@ func globrunqget(_p_ *p, max int32) *g {
 	if max > 0 && n > max {
 		n = max
 	}
+	// 要转移的数量不能超过局部队列容量的一半
 	if n > int32(len(_p_.runq))/2 {
 		n = int32(len(_p_.runq)) / 2
 	}
@@ -5530,6 +5552,7 @@ func globrunqget(_p_ *p, max int32) *g {
 
 	gp := sched.runq.pop()
 	n--
+	// 通过循环调用runqput将全局队列中的G放入P的局部运行队列中
 	for ; n > 0; n-- {
 		gp1 := sched.runq.pop()
 		runqput(_p_, gp1, false)
@@ -5858,7 +5881,9 @@ func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool
 	for {
 		h := atomic.LoadAcq(&_p_.runqhead) // load-acquire, synchronize with other consumers
 		t := atomic.LoadAcq(&_p_.runqtail) // load-acquire, synchronize with the producer
+		// 计算队列中有多少个goroutine
 		n := t - h
+		// 窃取队列中goroutine个数的一半
 		n = n - n/2
 		if n == 0 {
 			if stealRunNextG {
